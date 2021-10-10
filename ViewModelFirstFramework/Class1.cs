@@ -109,7 +109,12 @@ namespace ViewModelFirstFramework
     /// </summary>
     public abstract class BaseViewModel : ObservableObject, IViewModel
     {
-        public  bool IsBusy { get; set; }
+        private NavigationService _navigationService;
+
+        /// <summary>
+        /// https://taubensee.net/blog/activitybutton-in-xamarin-forms/
+        /// </summary>
+        public bool IsBusy { get; set; }
 
         public virtual void OnAppearing()
         {
@@ -126,6 +131,13 @@ namespace ViewModelFirstFramework
         /// </summary>
         public virtual void OnDisappearing()
         {
+        }
+
+
+
+        public void CloseCurrent()
+        {
+           // _navigationService.
         }
     }
 
