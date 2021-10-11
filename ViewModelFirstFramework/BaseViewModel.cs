@@ -1,10 +1,9 @@
 ﻿using System;
-using System.Collections.Concurrent;
 using System.Collections.Generic;
-using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Input;
+using Microsoft.Toolkit.Mvvm.Input;
 using Plugin.Connectivity;
 using ViewModelFirstFramework.Helpers;
 using Xamarin.Forms;
@@ -17,9 +16,9 @@ namespace ViewModelFirstFramework
 	public class BaseViewModel : Bindable, IDisposable
 	{
 		readonly CancellationTokenSource _networkTokenSource = new CancellationTokenSource();
-		readonly ConcurrentDictionary<string, ICommand> _cachedCommands = new ConcurrentDictionary<string, ICommand>();
+        private ICommand _goBackCommand;
 
-		public Dictionary<string, object> NavigationParams
+        public Dictionary<string, object> NavigationParams
 		{
 			get => Get<Dictionary<string, object>>();
 			private set
@@ -40,11 +39,20 @@ namespace ViewModelFirstFramework
 			get => Get<bool>();
 			protected internal set => Set(value);
 		}
-
+		/// <summary>
+		/// Признак соединения.
+		/// </summary>
 		public bool IsConnected => !CrossConnectivity.IsSupported || CrossConnectivity.IsSupported && CrossConnectivity.Current.IsConnected;
 		public CancellationToken CancellationToken => _networkTokenSource?.Token ?? CancellationToken.None;
 
-		public ICommand GoBackCommand => MakeCommand(GoBackCommandExecute);
+        #region Команды
+        /// <summary>
+        /// Команда назад.
+        /// </summary>
+        public ICommand GoBackCommand => _goBackCommand ?? (_goBackCommand = new RelayCommand(GoBackCommandExecute));
+        #endregion
+
+		
 
 		public void Dispose()
 		{
@@ -63,7 +71,7 @@ namespace ViewModelFirstFramework
 			CancelNetworkRequests();
 		}
 
-		public void SetNavigationParams(Dictionary<string, object> navParams)
+		public void Init(Dictionary<string, object> navParams)
 		{
 			NavigationParams = navParams;
 		}
@@ -103,14 +111,12 @@ namespace ViewModelFirstFramework
 			// do nothing
 		}
 
-		protected static Task<bool> NavigateTo(object toName,
-			object fromName = null,
+		protected static Task<bool> NavigateTo(Page page,
+            BaseViewModel viewModel,
 			NavigationMode mode = NavigationMode.Normal,
 			string toTitle = null,
 			Dictionary<string, object> navParams = null,
-			bool newNavigationStack = false,
-			bool withAnimation = true,
-			bool withBackButton = false)
+			bool newNavigationStack = false)
 		{
 
 			MessageBus.SendMessage(Consts.DialogHideLoadingMessage);
@@ -119,8 +125,8 @@ namespace ViewModelFirstFramework
 			MessageBus.SendMessage(Consts.NavigationPushMessage,
 				new NavigationPushInfo
 				{
-					To = toName.ToString(),
-					From = fromName?.ToString(),
+					Page = page,
+					ViewModel = viewModel,
 					Mode = mode,
 					NavigationParams = navParams,
 					NewNavigationStack = newNavigationStack,
@@ -129,26 +135,9 @@ namespace ViewModelFirstFramework
 			return completedTask.Task;
 		}
 
-		protected static ICommand MakeNavigateToCommand(object toName,
-			NavigationMode mode = NavigationMode.Normal,
-			string toTitle = null,
-			bool newNavigationStack = false,
-			bool withAnimation = true,
-			bool withBackButton = true,
-			Dictionary<string, object> navParams = null)
-		{
-			return new Command(() => NavigateTo(toName, null, mode, toTitle, navParams, newNavigationStack, withAnimation, withBackButton));
-		}
 
-		protected ICommand MakeCommand(Action commandAction, [CallerMemberName] string propertyName = null)
-		{
-			return GetCommand(propertyName) ?? SaveCommand(new Command(commandAction), propertyName);
-		}
 
-		protected ICommand MakeCommand(Action<object> commandAction, [CallerMemberName] string propertyName = null)
-		{
-			return GetCommand(propertyName) ?? SaveCommand(new Command(commandAction), propertyName);
-		}
+
 
 		protected Task<bool> NavigateBack(NavigationMode mode = NavigationMode.Normal, bool withAnimation = true, bool force = false)
 		{
@@ -167,13 +156,8 @@ namespace ViewModelFirstFramework
 			HideLoading();
 		}
 
-		void GoBackCommandExecute(object mode)
+		void GoBackCommandExecute()
 		{
-			if (mode is NavigationMode navigationMode)
-			{
-				NavigateBack(navigationMode);
-				return;
-			}
 			NavigateBack();
 		}
 
@@ -259,25 +243,6 @@ namespace ViewModelFirstFramework
 				});
 		}
 
-		ICommand SaveCommand(ICommand command, string propertyName)
-		{
-			if (string.IsNullOrEmpty(propertyName))
-				throw new ArgumentNullException(nameof(propertyName));
-
-			if (!_cachedCommands.ContainsKey(propertyName))
-				_cachedCommands.TryAdd(propertyName, command);
-
-			return command;
-		}
-
-		ICommand GetCommand(string propertyName)
-		{
-			if (string.IsNullOrEmpty(propertyName))
-				throw new ArgumentNullException(nameof(propertyName));
-
-			return _cachedCommands.TryGetValue(propertyName, out var cachedCommand)
-				? cachedCommand
-				: null;
-		}
+	
 	}
 }
