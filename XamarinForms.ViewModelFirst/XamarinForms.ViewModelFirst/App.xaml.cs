@@ -1,6 +1,5 @@
-﻿using System;
+﻿using ViewModelFirstFramework;
 using Xamarin.Forms;
-using Xamarin.Forms.Xaml;
 
 
 namespace XamarinForms.ViewModelFirst
@@ -23,8 +22,8 @@ namespace XamarinForms.ViewModelFirst
         protected override async void OnStart()
         {
             InitializeComponent();
-            //TODO: запуск страницы логина
-          //  await NavigationService.Init(Pages.Login);
+            
+            await InnerNavigationService.Init(new NavigationPushInfo() { Page = new Page()});
         }
 
         protected override void OnSleep()
