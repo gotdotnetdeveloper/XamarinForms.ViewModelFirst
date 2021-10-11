@@ -5,16 +5,19 @@ using System.Runtime.CompilerServices;
 using System.Threading;
 using System.Threading.Tasks;
 using System.Windows.Input;
-using Microsoft.Toolkit.Mvvm.ComponentModel;
 using Plugin.Connectivity;
+using ViewModelFirstFramework.Helpers;
 using Xamarin.Forms;
 
 namespace ViewModelFirstFramework
 {
-
+	/// <summary>
+	/// Базовое представление MVVM.
+	/// </summary>
 	public class BaseViewModel : Bindable, IDisposable
 	{
 		readonly CancellationTokenSource _networkTokenSource = new CancellationTokenSource();
+		readonly ConcurrentDictionary<string, ICommand> _cachedCommands = new ConcurrentDictionary<string, ICommand>();
 
 		public Dictionary<string, object> NavigationParams
 		{
@@ -109,23 +112,20 @@ namespace ViewModelFirstFramework
 			bool withAnimation = true,
 			bool withBackButton = false)
 		{
-            
-		//	MessageBus.SendMessage(Consts.DialogHideLoadingMessage);
+
+			MessageBus.SendMessage(Consts.DialogHideLoadingMessage);
 
 			var completedTask = new TaskCompletionSource<bool>();
-
-			NavigationService.Instance.Push(new NavigationPushInfo
-            {
-                To = toName.ToString(),
-                From = fromName?.ToString(),
-                Mode = mode,
-                NavigationParams = navParams,
-                NewNavigationStack = newNavigationStack,
-                OnCompletedTask = completedTask,
-            });
-
-
-			
+			MessageBus.SendMessage(Consts.NavigationPushMessage,
+				new NavigationPushInfo
+				{
+					To = toName.ToString(),
+					From = fromName?.ToString(),
+					Mode = mode,
+					NavigationParams = navParams,
+					NewNavigationStack = newNavigationStack,
+					OnCompletedTask = completedTask,
+				});
 			return completedTask.Task;
 		}
 
@@ -152,16 +152,20 @@ namespace ViewModelFirstFramework
 
 		protected Task<bool> NavigateBack(NavigationMode mode = NavigationMode.Normal, bool withAnimation = true, bool force = false)
 		{
+			ClearDialogs();
 			var taskCompletionSource = new TaskCompletionSource<bool>();
-			NavigationService.Instance.Pop(new NavigationPopInfo
-            {
-                Mode = mode,
-                OnCompletedTask = taskCompletionSource
-            });
+			MessageBus.SendMessage(Consts.NavigationPopMessage, new NavigationPopInfo
+			{
+				Mode = mode,
+				OnCompletedTask = taskCompletionSource
+			});
 			return taskCompletionSource.Task;
 		}
 
-	
+		public void ClearDialogs()
+		{
+			HideLoading();
+		}
 
 		void GoBackCommandExecute(object mode)
 		{
@@ -276,15 +280,4 @@ namespace ViewModelFirstFramework
 				: null;
 		}
 	}
-
-
-
-
-
-
-      
-
-
-
-    }
 }

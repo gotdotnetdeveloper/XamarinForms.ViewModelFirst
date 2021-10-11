@@ -1,98 +1,117 @@
-﻿using System;
+using System;
 using System.Collections.Generic;
 using System.Linq;
 using System.Reflection;
 using System.Threading.Tasks;
+using ViewModelFirstFramework.Helpers;
 using Xamarin.Forms;
 
 namespace ViewModelFirstFramework
 {
-    /// <summary>
-    /// Сервис Навигации.
-    /// </summary>
-    public class NavigationService
-    {
-		/// <summary>
-		/// Ленивая инициализация.
-		/// </summary>
-        static readonly Lazy<NavigationService> LazyInstance = new Lazy<NavigationService>(() => new NavigationService(), true);
+	public sealed class NavigationService
+	{
+		static readonly Lazy<NavigationService> LazyInstance = new Lazy<NavigationService>(() => new NavigationService(), true);
 
-		/// <summary>
-		/// Доступ до экземпляра сервиса навигации, при ленивой инициализации.
-		/// </summary>
+		readonly Dictionary<string, Type> _pageTypes;
+		readonly Dictionary<string, Type> _viewModelTypes;
+
+
+		NavigationService()
+		{
+			_pageTypes = GetAssemblyPageTypes();
+			_viewModelTypes = GetAssemblyViewModelTypes();
+			MessagingCenter.Subscribe<MessageBus, NavigationPushInfo>(this, Consts.NavigationPushMessage, NavigationPushCallback);
+			MessagingCenter.Subscribe<MessageBus, NavigationPopInfo>(this, Consts.NavigationPopMessage, NavigationPopCallback);
+		}
+	    public static Task Init(Pages page)
+	    {
+	        return Instance.Initialize(page);
+	    }
+
+	    Task Initialize(Pages page)
+	    {
+		    var tks = new TaskCompletionSource<bool>();
+			var initPage  = GetInitializedPage(page.ToString());
+		    RootPush(initPage, tks);
+		    return tks.Task;
+	    }
+
+
 		public static NavigationService Instance => LazyInstance.Value;
 
-
-        /// <summary>
-        /// Убрать страницу из стека. (удалить страницу)
-        /// </summary>
-        public void Pop(NavigationPopInfo popInfo)
-        {
-            switch (popInfo.Mode)
-            {
-                case NavigationMode.Normal:
-                    NormalPop(popInfo.OnCompletedTask);
-                    break;
-                case NavigationMode.Modal:
-                    ModalPop(popInfo.OnCompletedTask);
-                    break;
-                default:
-                    throw new NotImplementedException();
-            }
-        }
-        public void Push(NavigationPushInfo pushInfo, Page newPage = null)
-        {
-
-            switch (pushInfo.Mode)
-            {
-                case NavigationMode.Normal:
-                    NormalPush(newPage, pushInfo.OnCompletedTask);
-                    break;
-                case NavigationMode.Modal:
-                    ModalPush(newPage, pushInfo.OnCompletedTask, pushInfo.NewNavigationStack);
-                    break;
-                case NavigationMode.RootPage:
-                    RootPush(newPage, pushInfo.OnCompletedTask);
-                    break;
-
-                default:
-                    throw new NotImplementedException();
-            }
-        }
-
-
-
-
-		#region Приватные методы
-
-		/// <summary>
-		/// Получить новигацию со стека верхнего уровеня 
-		/// </summary>
-		INavigation GetTopNavigation()
+		void NavigationPushCallback(MessageBus bus, NavigationPushInfo navigationPushInfo)
 		{
+			if (navigationPushInfo == null) throw new ArgumentNullException(nameof(navigationPushInfo));
+			if (string.IsNullOrEmpty(navigationPushInfo.To)) throw new FieldAccessException(@"'To' page value should be set");
+
+		    Push(navigationPushInfo);
+		}
+
+		void NavigationPopCallback(MessageBus bus, NavigationPopInfo navigationPopInfo)
+		{
+			if (navigationPopInfo == null) throw new ArgumentNullException(nameof(navigationPopInfo));
+		    Pop(navigationPopInfo);
+		}
+
+		#region NavigationService internals
+
+		INavigation GetTopNavigation() {
 			var mainPage = Application.Current.MainPage;
+			if (mainPage is MasterDetailPage masterDetailPage) {
+				if (masterDetailPage.Detail is NavigationPage navigationPage) {
+					var modalStack = navigationPage.Navigation.ModalStack.OfType<NavigationPage>().ToList();
+					if (modalStack.Any()) {
+						return modalStack.LastOrDefault()?.Navigation;
+					}
+					return navigationPage.Navigation;
+				}
+			}
 			return (mainPage as NavigationPage)?.Navigation;
 		}
 
-	
+	    void Push(NavigationPushInfo pushInfo)
+	    {
+	        var newPage = GetInitializedPage(pushInfo);
 
-		void RootPush(Page newPage, TaskCompletionSource<bool> pushInfoOnCompletedTask)
-		{
-			Device.BeginInvokeOnMainThread(() =>
-			{
-				try
-				{
-					Application.Current.MainPage = new NavigationPage(newPage);
-					pushInfoOnCompletedTask.SetResult(true);
-				}
-				catch
-				{
-					pushInfoOnCompletedTask.SetResult(false);
-				}
-			});
-		}
+	        switch (pushInfo.Mode)
+	        {
+	            case NavigationMode.Normal:
+	                NormalPush(newPage, pushInfo.OnCompletedTask);
+	                break;
+	            case NavigationMode.Modal:
+	                ModalPush(newPage, pushInfo.OnCompletedTask, pushInfo.NewNavigationStack);
+	                break;
+				case NavigationMode.RootPage:
+					RootPush(newPage, pushInfo.OnCompletedTask);
+					break;
+	            case NavigationMode.Master:
+		            MasterPush(newPage, pushInfo.OnCompletedTask);
+		            break;
+		        case NavigationMode.Custom:
+					CustomPush(newPage, pushInfo.OnCompletedTask);
+			        break;
+		        default:
+	                throw new NotImplementedException();
+	        }
+	    }
 
-		void NormalPush(Page newPage, TaskCompletionSource<bool> completed)
+	    void RootPush(Page newPage, TaskCompletionSource<bool> pushInfoOnCompletedTask)
+	    {
+		    Device.BeginInvokeOnMainThread(() =>
+		    {
+			    try
+			    {
+				    Application.Current.MainPage = new NavigationPage(newPage);
+				    pushInfoOnCompletedTask.SetResult(true);
+			    }
+			    catch
+			    {
+				    pushInfoOnCompletedTask.SetResult(false);
+			    }
+		    });
+	    }
+
+	    void NormalPush(Page newPage, TaskCompletionSource<bool> completed)
 		{
 			Device.BeginInvokeOnMainThread(async () =>
 			{
@@ -113,7 +132,7 @@ namespace ViewModelFirstFramework
 			{
 				try
 				{
-					if (newNavigationStack) newPage = new NavigationPage(newPage);
+					if(newNavigationStack) newPage = new NavigationPage(newPage);
 					await GetTopNavigation().PushModalAsync(newPage, true);
 					completed.SetResult(true);
 				}
@@ -123,38 +142,93 @@ namespace ViewModelFirstFramework
 				}
 			});
 		}
+		void MasterPush(Page newPage, TaskCompletionSource<bool> pushInfoOnCompletedTask = null) {
+			Device.BeginInvokeOnMainThread(async () => {
+				try {
+					if (Application.Current.MainPage is MasterDetailPage mp) {
+						mp.IsPresented = false;
+						await Task.Delay(250);
+						if (mp.Detail is NavigationPage navigationPage) {
+							var navigation = navigationPage.Navigation;
+							var navigationStack = navigationPage.Navigation.NavigationStack;
+							if (navigationStack.Any()) {
+								navigation.InsertPageBefore(newPage, navigationStack.FirstOrDefault());
+								await navigation.PopToRootAsync();
+							}
+						}
+						pushInfoOnCompletedTask?.SetResult(true);
+					}
+					else
+					{
+						var masterPage = GetInitializedPage(Pages.Menu.ToString());
+						//Xamarin.Forms return exception when master page title is null
+						//this title not visible in app
+						masterPage.Title = nameof(masterPage);
+						var detailPage = new NavigationPage(newPage);
+						Application.Current.MainPage = new MasterDetailPage {
+							Master = masterPage,
+							Detail = detailPage
+						};
+					}
+				}
+				catch (Exception e) {
+					Console.WriteLine(e);
+					pushInfoOnCompletedTask?.SetResult(false);
+				}
+			});
 
-      
+		}
+		void CustomPush(Page newPage, TaskCompletionSource<bool> pushInfoOnCompletedTask) {
+			// TODO: Implement your own navigation stack manipulation using popInfo
+		}
+		void Pop(NavigationPopInfo popInfo) {
+			switch (popInfo.Mode) {
+				case NavigationMode.Normal:
+					NormalPop(popInfo.OnCompletedTask);
+					break;
+				case NavigationMode.Modal:
+					ModalPop(popInfo.OnCompletedTask);
+					break;
+				case NavigationMode.Custom:
+					CustomPop(popInfo.OnCompletedTask);
+					break;
+				default:
+					throw new NotImplementedException();
+			}
+		}
 		void ModalPop(TaskCompletionSource<bool> completed)
 		{
-			Device.BeginInvokeOnMainThread(async () =>
-			{
-				try
-				{
-					await GetTopNavigation().PopModalAsync();
-					completed.SetResult(true);
-				}
-				catch
-				{
-					completed.SetResult(false);
-				}
-			});
+		    Device.BeginInvokeOnMainThread(async () =>
+		    {
+		        try
+		        {
+		            await GetTopNavigation().PopModalAsync();
+		            completed.SetResult(true);
+		        }
+		        catch
+		        {
+		            completed.SetResult(false);
+		        }
+		    });
 		}
-
-		void NormalPop(TaskCompletionSource<bool> completed)
+	    void CustomPop(TaskCompletionSource<bool> completed)
+	    {
+		    // TODO: Implement your own navigation stack manipulation using popInfo
+	    }
+        void NormalPop(TaskCompletionSource<bool> completed)
 		{
-			Device.BeginInvokeOnMainThread(async () =>
-			{
-				try
-				{
-					await GetTopNavigation().PopAsync();
-					completed.SetResult(true);
-				}
-				catch
-				{
-					completed.SetResult(false);
-				}
-			});
+		   Device.BeginInvokeOnMainThread(async () =>
+		   {
+		       try
+		       {
+		           await GetTopNavigation().PopAsync();
+		           completed.SetResult(true);
+		       }
+		       catch
+		       {
+                   completed.SetResult(false);
+		       }
+		   });
 		}
 		static string GetTypeBaseName(MemberInfo info)
 		{
@@ -163,7 +237,7 @@ namespace ViewModelFirstFramework
 		}
 		static Dictionary<string, Type> GetAssemblyPageTypes()
 		{
-			return typeof(BaseView).GetTypeInfo().Assembly.DefinedTypes
+			return typeof(BasePage).GetTypeInfo().Assembly.DefinedTypes
 				.Where(ti => ti.IsClass && !ti.IsAbstract && ti.Name.Contains(@"Page") && ti.BaseType.Name.Contains(@"Page"))
 				.ToDictionary(GetTypeBaseName, ti => ti.AsType());
 		}
@@ -175,86 +249,70 @@ namespace ViewModelFirstFramework
 										.ToDictionary(GetTypeBaseName, ti => ti.AsType());
 		}
 
-	
+		BasePage GetInitializedPage(string toName, Dictionary<string, object> navParams = null) {
+			var page = GetPage(toName);
+			var viewModel = GetViewModel(toName);
+			viewModel.SetNavigationParams(navParams);
+			page.BindingContext = viewModel;
+			return page;
+		}
 
-	
-	
-		
+		Page GetInitializedPage(NavigationPushInfo navigationPushInfo)
+		{
+			return GetInitializedPage(navigationPushInfo.To, navigationPushInfo.NavigationParams);
+		}
+
+	    BasePage GetPage(string pageName)
+		{
+			if (!_pageTypes.ContainsKey(pageName)) throw new KeyNotFoundException($@"Page for {pageName} not found");
+		    BasePage page;
+			try
+			{
+				var pageType = _pageTypes[pageName];
+				var pageObject = Activator.CreateInstance(pageType);
+				page = pageObject as BasePage;
+			}
+			catch (Exception e)
+			{
+				throw new TypeLoadException($@"Unable create instance for {pageName}Page", e);
+			}
+
+			return page;
+		}
+
+		BaseViewModel GetViewModel(string pageName)
+		{
+			if (!_viewModelTypes.ContainsKey(pageName)) throw new KeyNotFoundException($@"ViewModel for {pageName} not found");
+			BaseViewModel viewModel;
+			try
+			{
+				viewModel = Activator.CreateInstance(_viewModelTypes[pageName]) as BaseViewModel;
+			}
+			catch (Exception e)
+			{
+				throw new TypeLoadException($@"Unable create instance for {pageName}ViewModel", e);
+			}
+
+			return viewModel;
+		}
 
 		#endregion
-
-		void Show(IViewModel viewModel, IView view)
-        {
-            
-        }
-    }
-	/// <summary>
-	/// контекст для положить страницу в стек. (отобразить страницу)
-	/// </summary>
+	}
+	
     public class NavigationPushInfo
-    {
-        public string From { get; set; }
-        public string To { get; set; }
-        public Dictionary<string, object> NavigationParams { get; set; }
-        public NavigationMode Mode { get; set; } = NavigationMode.Normal;
-        public bool NewNavigationStack { get; set; }
-        public TaskCompletionSource<bool> OnCompletedTask { get; set; }
-    }
-    /// <summary>
-    /// контекст для убрать страницу из стека. (удалить страницу)
-    /// </summary>
+	{
+		public string From { get; set; }
+		public string To { get; set; }
+		public Dictionary<string, object> NavigationParams { get; set; }
+		public NavigationMode Mode { get; set; } = NavigationMode.Normal;
+		public bool NewNavigationStack { get; set; }
+	    public TaskCompletionSource<bool> OnCompletedTask { get; set; }
+	}
+
 	public class NavigationPopInfo
-    {
-        public NavigationMode Mode { get; set; } = NavigationMode.Normal;
+	{
+		public NavigationMode Mode { get; set; } = NavigationMode.Normal;
         public TaskCompletionSource<bool> OnCompletedTask { get; set; }
-        public string To { get; set; }
-    }
-
-    public enum NavigationMode
-    {
-		/// <summary>
-		/// Обычная навигация (полноэкранная форма)
-		/// </summary>
-        Normal,
-		/// <summary>
-		/// Модальное (диалоговое) окно.
-		/// </summary>
-        Modal,
-		/// <summary>
-		/// первая страница приложения.
-		/// </summary>
-        RootPage,
-    }
-
-	/// <summary>
-	/// Режимы отображения страницы.
-	/// </summary>
-    public enum PageState
-    {
-		/// <summary>
-		/// 
-		/// </summary>
-        Clean,
-		/// <summary>
-		/// Отображение процесса загрузки страницы (IsBuisy)
-		/// </summary>
-        Loading,
-		/// <summary>
-		/// Загружены данные. Все ок.
-		/// </summary>
-        Normal,
-		/// <summary>
-		/// Отсутствие контента (запрос вернул пустую коллекцию)
-		/// </summary>
-        NoData,
-		/// <summary>
-		/// Необработанное исключение.
-		/// </summary>
-        Error,
-		/// <summary>
-		/// Отсутствие соединение.
-		/// </summary>
-        NoInternet
-    }
-
+	    public string To { get; set; }
+	}
 }
